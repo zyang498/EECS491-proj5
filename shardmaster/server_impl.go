@@ -140,69 +140,88 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	return nil
 }
 
-//
-// Execute operation encoded in decided value v and update local state
-//
-
 func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, operation int) (map[int64]int, map[int64]int) {
-	//log.Printf("%v, Init distribution is %v", operation, sm.impl.ShardDistribution)
 	donors := make(map[int64]int)
 	acceptors := make(map[int64]int)
 	groupSize := len(sm.impl.ShardDistribution)
 	if groupSize <= 16 {
 		newVal := common.NShards / groupSize
-		remainder := common.NShards % groupSize
+		balance := 0
 		if operation == Leave {
-			donors[leaver] = donateVal
+			balance += donateVal
 		}
 		for group, val := range sm.impl.ShardDistribution {
-			if val < newVal {
+			if val > newVal+1 {
+				// find donors
+				donors[group] = val - newVal - 1
+				balance += val - newVal - 1
+				sm.impl.ShardDistribution[group] = newVal + 1
+			} else if val < newVal {
+				// find acceptors
 				acceptors[group] = newVal - val
-			} else if val > newVal {
-				donors[group] = val - newVal
+				balance -= newVal - val
+				sm.impl.ShardDistribution[group] = newVal
 			}
-			sm.impl.ShardDistribution[group] = newVal
 		}
-		if remainder > 0 {
-			// todo: can be optimized
-			for group, _ := range sm.impl.ShardDistribution {
-				if remainder == 0 {
+		if balance > 0 {
+			for group, val := range sm.impl.ShardDistribution {
+				if balance == 0 {
 					break
 				}
-				sm.impl.ShardDistribution[group] += 1
-				if _, isDonor := donors[group]; isDonor {
-					donors[group] -= 1
-				} else if _, isAcceptor := acceptors[group]; isAcceptor {
-					acceptors[group] += 1
-				} else {
-					acceptors[group] = 1
+				if val == newVal {
+					if _, isAcceptor := acceptors[group]; isAcceptor {
+						acceptors[group] += 1
+					} else {
+						acceptors[group] = 1
+					}
+					balance -= 1
+					sm.impl.ShardDistribution[group] = newVal + 1
 				}
-				remainder -= 1
 			}
+		} else if balance < 0 {
+			for group, val := range sm.impl.ShardDistribution {
+				if balance == 0 {
+					break
+				}
+				if val == newVal+1 {
+					if _, isDonor := donors[group]; isDonor {
+						donors[group] += 1
+					} else {
+						donors[group] = 1
+					}
+					balance += 1
+					sm.impl.ShardDistribution[group] = newVal
+				}
+			}
+		}
+		if operation == Leave {
+			donors[leaver] = donateVal
 		}
 	} else {
 		newVal := 1
-		totalDonation := 0
+		balance := 0
 		if operation == Leave {
-			totalDonation += donateVal
-			donors[leaver] = donateVal
+			balance += donateVal
 		}
 		for group, val := range sm.impl.ShardDistribution {
 			if val > newVal {
 				donors[group] = val - newVal
-				totalDonation += val - newVal
+				balance += val - newVal
 				sm.impl.ShardDistribution[group] = newVal
 			}
 		}
 		for group, val := range sm.impl.ShardDistribution {
-			if totalDonation == 0 {
+			if balance == 0 {
 				break
 			}
 			if val < newVal {
 				acceptors[group] = newVal - val
-				totalDonation -= newVal - val
+				balance -= newVal - val
 				sm.impl.ShardDistribution[group] = newVal
 			}
+		}
+		if operation == Leave {
+			donors[leaver] = donateVal
 		}
 	}
 	// for debug
@@ -232,6 +251,7 @@ func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) 
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
 			if vd > 0 {
+				donors[shards[i]] -= 1
 				for acceptor, va := range acceptors {
 					if va > 0 {
 						shards[i] = acceptor
@@ -240,7 +260,6 @@ func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) 
 					}
 				}
 			}
-			donors[shards[i]] -= 1
 		}
 	}
 	return shards
@@ -258,6 +277,7 @@ func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64)
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
 			if vd > 0 {
+				donors[shards[i]] -= 1
 				for acceptor, va := range acceptors {
 					if va > 0 {
 						shards[i] = acceptor
@@ -266,11 +286,14 @@ func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64)
 					}
 				}
 			}
-			donors[shards[i]] -= 1
 		}
 	}
 	return shards
 }
+
+//
+// Execute operation encoded in decided value v and update local state
+//
 
 func (sm *ShardMaster) ApplyOp(v interface{}) {
 	op := v.(Op)
