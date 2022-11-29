@@ -40,7 +40,7 @@ func (rsm *PaxosRSM) AddOp(v interface{}) {
 			if status == paxos.Decided {
 				rsm.px.Done(rsm.impl.currSeq)
 				rsm.impl.currSeq++
-				if val == v { // successfully find a slot
+				if rsm.equals(val, v) { // successfully find a slot
 					return
 				} else {
 					rsm.applyOp(val)

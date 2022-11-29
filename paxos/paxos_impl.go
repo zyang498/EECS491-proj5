@@ -145,7 +145,7 @@ func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *Proposa
 	px.mu.Lock()
 	var seen_na []ProposalNumber
 	var seen_va []interface{}
-	mojorityCopy := len(px.peers)/2 + 1
+	majorityCopy := len(px.peers)/2 + 1
 	majority := len(px.peers)/2 + 1
 	if len(*seen_np) == 0 {
 		if _, isPromised := px.impl.np[seq]; isPromised {
@@ -179,7 +179,7 @@ func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *Proposa
 				if len(seen_na) == 0 {
 					return true, v, false
 				} else {
-					idx, canSkipAccept := FindValue(seen_na, seen_va, mojorityCopy)
+					idx, canSkipAccept := FindValue(seen_na, seen_va, majorityCopy)
 					if canSkipAccept {
 						return true, seen_va[idx], canSkipAccept
 					}
@@ -191,7 +191,7 @@ func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *Proposa
 		if len(seen_na) == 0 {
 			return true, v, false
 		} else {
-			idx, canSkipAccept := FindValue(seen_na, seen_va, mojorityCopy)
+			idx, canSkipAccept := FindValue(seen_na, seen_va, majorityCopy)
 			return true, seen_va[idx], canSkipAccept
 		}
 	} else {

@@ -28,7 +28,33 @@ type Op struct {
 // Method used by PaxosRSM to determine if two Op values are identical
 //
 func equals(v1 interface{}, v2 interface{}) bool {
-	return v1 == v2
+	op1 := v1.(Op)
+	op2 := v2.(Op)
+	if op1.Operation != op2.Operation {
+		return false
+	} else {
+		if op1.Operation == Join {
+			if op1.GID == op2.GID {
+				return true
+			}
+			return false
+		} else if op1.Operation == Leave {
+			if op1.GID == op2.GID {
+				return true
+			}
+			return false
+		} else if op1.Operation == Move {
+			if op1.GID == op2.GID && op1.Shard == op2.Shard {
+				return true
+			}
+			return false
+		} else {
+			if op1.ConfigNum == op2.ConfigNum {
+				return true
+			}
+			return false
+		}
+	}
 }
 
 //
@@ -43,7 +69,6 @@ type ShardMasterImpl struct {
 //
 func (sm *ShardMaster) InitImpl() {
 	sm.impl.ShardDistribution = make(map[int64]int)
-	sm.impl.ShardDistribution[0] = common.NShards
 }
 
 func (sm *ShardMaster) getLatestConfig() Config {
@@ -119,96 +144,129 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 // Execute operation encoded in decided value v and update local state
 //
 
-func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, acceptor int64) [common.NShards]int64 {
-	var donor map[int64]int
-	for i := range shards {
-		if _, ok := donor[shards[i]]; !ok {
-			donor[shards[i]] = 0
-		}
-	}
-	// change distribution
+func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, operation int) (map[int64]int, map[int64]int) {
+	//log.Printf("%v, Init distribution is %v", operation, sm.impl.ShardDistribution)
+	donors := make(map[int64]int)
+	acceptors := make(map[int64]int)
 	groupSize := len(sm.impl.ShardDistribution)
-	if groupSize < common.NShards {
-		acceptVal := common.NShards / (groupSize + 1)
-		cnt := acceptVal
+	if groupSize <= 16 {
+		newVal := common.NShards / groupSize
+		remainder := common.NShards % groupSize
+		if operation == Leave {
+			donors[leaver] = donateVal
+		}
 		for group, val := range sm.impl.ShardDistribution {
-			if cnt == 0 {
+			if val < newVal {
+				acceptors[group] = newVal - val
+			} else if val > newVal {
+				donors[group] = val - newVal
+			}
+			sm.impl.ShardDistribution[group] = newVal
+		}
+		if remainder > 0 {
+			// todo: can be optimized
+			for group, _ := range sm.impl.ShardDistribution {
+				if remainder == 0 {
+					break
+				}
+				sm.impl.ShardDistribution[group] += 1
+				if _, isDonor := donors[group]; isDonor {
+					donors[group] -= 1
+				} else if _, isAcceptor := acceptors[group]; isAcceptor {
+					acceptors[group] += 1
+				} else {
+					acceptors[group] = 1
+				}
+				remainder -= 1
+			}
+		}
+	} else {
+		newVal := 1
+		totalDonation := 0
+		if operation == Leave {
+			totalDonation += donateVal
+			donors[leaver] = donateVal
+		}
+		for group, val := range sm.impl.ShardDistribution {
+			if val > newVal {
+				donors[group] = val - newVal
+				totalDonation += val - newVal
+				sm.impl.ShardDistribution[group] = newVal
+			}
+		}
+		for group, val := range sm.impl.ShardDistribution {
+			if totalDonation == 0 {
 				break
 			}
-			if val > acceptVal {
-				sm.impl.ShardDistribution[group] -= 1
-				donor[group] += 1
-				cnt -= 1
+			if val < newVal {
+				acceptors[group] = newVal - val
+				totalDonation -= newVal - val
+				sm.impl.ShardDistribution[group] = newVal
 			}
 		}
-		sm.impl.ShardDistribution[acceptor] = acceptVal
-	} else {
-		sm.impl.ShardDistribution[acceptor] = 0
 	}
+	// for debug
+	d := 0
+	a := 0
+	for _, v := range donors {
+		d += v
+	}
+	for _, v := range acceptors {
+		a += v
+	}
+	if a != d {
+		log.Printf("Donation %v isn't equal to accpetion %v!", donors, acceptors)
+		log.Printf("Distribution is %v", sm.impl.ShardDistribution)
+	}
+	return donors, acceptors
+}
+
+func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) [common.NShards]int64 {
+	// addition join
+	if _, ok := sm.impl.ShardDistribution[joiner]; ok {
+		return shards
+	}
+	// change distribution
+	sm.impl.ShardDistribution[joiner] = 0
+	donors, acceptors := sm.findOptimalDistribution(0, 0, Join)
 	for i := range shards {
-		if donor[shards[i]] > 0 {
-			shards[i] = acceptor
-			donor[shards[i]] -= 1
+		if vd, ok := donors[shards[i]]; ok {
+			if vd > 0 {
+				for acceptor, va := range acceptors {
+					if va > 0 {
+						shards[i] = acceptor
+						acceptors[acceptor] -= 1
+						break
+					}
+				}
+			}
+			donors[shards[i]] -= 1
 		}
 	}
 	return shards
 }
 
-func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, donor int64) [common.NShards]int64 {
-	var acceptor map[int64]int
-	for group, _ := range sm.impl.ShardDistribution {
-		acceptor[group] = 0
+func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64) [common.NShards]int64 {
+	// addition leave
+	if _, ok := sm.impl.ShardDistribution[leaver]; !ok {
+		return shards
 	}
 	// change distribution
-	groupSize := len(sm.impl.ShardDistribution)
-	donateVal := sm.impl.ShardDistribution[donor]
-	for group, _ := range sm.impl.ShardDistribution {
-		if group == donor {
-			delete(sm.impl.ShardDistribution, donor)
-			break
-		}
-	}
-	if groupSize <= common.NShards {
-		acceptVal := common.NShards / (groupSize - 1)
-		for group, val := range sm.impl.ShardDistribution {
-			if donateVal == 0 {
-				break
-			}
-			if val < acceptVal && donateVal >= acceptVal-val {
-				donateVal -= acceptVal - val
-				sm.impl.ShardDistribution[group] = acceptVal
-				acceptor[group] += acceptVal - val
-			}
-		}
-		if donateVal > 0 {
-			for group, val := range sm.impl.ShardDistribution {
-				if donateVal == 0 {
-					break
-				}
-				if val == acceptVal {
-					sm.impl.ShardDistribution[group] += 1
-					acceptor[group] += 1
-					donateVal -= 1
-				}
-			}
-		}
-	} else if donateVal > 0 {
-		for group, val := range sm.impl.ShardDistribution {
-			if val == 0 { // idle group
-				sm.impl.ShardDistribution[group] = donateVal
-				acceptor[group] = donateVal
-				break
-			}
-		}
-	}
+	donateVal := sm.impl.ShardDistribution[leaver]
+	delete(sm.impl.ShardDistribution, leaver)
+	donors, acceptors := sm.findOptimalDistribution(donateVal, leaver, Leave)
 	for i := range shards {
-		if shards[i] == donor {
-			for group, val := range acceptor {
-				if val > 0 {
-					shards[i] = group
-					acceptor[group] -= 1
+		if vd, ok := donors[shards[i]]; ok {
+			if vd > 0 {
+				for acceptor, va := range acceptors {
+					if va > 0 {
+						shards[i] = acceptor
+						acceptors[acceptor] -= 1
+						break
+					}
 				}
 			}
+			donors[shards[i]] -= 1
 		}
 	}
 	return shards
@@ -234,6 +292,7 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			for i := range shards {
 				shards[i] = op.GID
 			}
+			sm.impl.ShardDistribution[op.GID] = common.NShards
 		} else {
 			shards = sm.joinReassign(lastConfig.Shards, op.GID)
 		}
@@ -273,5 +332,11 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 		shards[op.Shard] = op.GID
 		sm.impl.ShardDistribution[oldGID] -= 1
 		sm.impl.ShardDistribution[op.GID] += 1
+		config := Config{
+			Num:    lastConfig.Num + 1,
+			Shards: shards,
+			Groups: groups,
+		}
+		sm.configs = append(sm.configs, config)
 	}
 }
