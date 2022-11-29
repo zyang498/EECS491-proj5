@@ -47,7 +47,7 @@ func (rsm *PaxosRSM) AddOp(v interface{}) {
 				}
 				break
 			} else if status == paxos.Forgotten {
-				log.Println("Error: forgotton but still needed")
+				log.Println("Error: forgotten but still needed")
 			}
 			time.Sleep(to)
 			if to < 10*time.Second {

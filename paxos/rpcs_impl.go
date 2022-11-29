@@ -51,13 +51,6 @@ type DecidedReply struct {
 	me       int
 }
 
-type GetMaxArgs struct {
-}
-
-type GetMaxReply struct {
-	Max int
-}
-
 func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	// could be optimized: put lock into if statement
 	px.mu.Lock()
@@ -90,15 +83,6 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 	px.mu.Lock()
 	defer px.mu.Unlock()
-	if _, ok := px.impl.np[args.Seq]; !ok {
-		px.impl.np[args.Seq] = args.N
-		px.impl.na[args.Seq] = args.N
-		px.impl.va[args.Seq] = args.V
-		reply.Response = OK
-		reply.Seq = args.Seq
-		reply.N = args.N
-		return nil
-	}
 	if args.N.Number > px.impl.np[args.Seq].Number {
 		px.impl.np[args.Seq] = args.N
 		px.impl.na[args.Seq] = args.N
@@ -115,7 +99,7 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 			reply.Seq = args.Seq
 			reply.N = args.N
 		} else {
-			//log.Printf("Proposer %v and Proposer %v both enter accept phase on seq %v with proposal number %v", px.impl.np[args.Seq].Id, args.N.Id, args.Seq, args.N.Number)
+			log.Printf("Proposer %v and Proposer %v both enter accept phase with proposal number %v", px.impl.np[args.Seq].Id, args.N.Id, args.N.Number)
 			reply.Response = Reject
 			reply.Seq = args.Seq
 			reply.N = args.N
@@ -134,23 +118,11 @@ func (px *Paxos) Learn(args *DecidedArgs, reply *DecidedReply) error {
 	// if Seq not in log and Seq is greater than local highest done seq number, succeed
 	if args.Seq > px.impl.localDone {
 		if _, ok := px.impl.instanceLog[args.Seq]; ok {
-			if px.impl.instanceLog[args.Seq] == args.V {
-				px.impl.np[args.Seq] = args.N
-				px.impl.na[args.Seq] = args.N
-				px.impl.va[args.Seq] = args.V
-				reply.Response = OK
-				reply.me = px.me
-				reply.Done = px.impl.localDone
-			} else {
-				log.Printf("Requested decide for Seq %v on replica %v but Seq already in log with different value %s", args.Seq, px.me, px.impl.instanceLog[args.Seq])
-				reply.Response = Reject
-				reply.me = px.me
-				reply.Done = px.impl.localDone
-			}
+			px.impl.instanceLog[args.Seq] = args.V
+			reply.Response = OK
+			reply.me = px.me
+			reply.Done = px.impl.localDone
 		} else {
-			px.impl.np[args.Seq] = args.N
-			px.impl.na[args.Seq] = args.N
-			px.impl.va[args.Seq] = args.V
 			px.impl.instanceLog[args.Seq] = args.V
 			reply.Response = OK
 			reply.me = px.me
@@ -169,8 +141,4 @@ func (px *Paxos) Learn(args *DecidedArgs, reply *DecidedReply) error {
 // add RPC handlers for any RPCs you introduce.
 //
 
-// get Max()
-func (px *Paxos) GetMax(args *GetMaxArgs, reply *GetMaxReply) error {
-	reply.Max = px.Max()
-	return nil
-}
+// get localDone

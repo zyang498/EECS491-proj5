@@ -8,6 +8,8 @@ import (
 const (
 	StartProposalNumber = 0
 	InitDone            = -1
+	Proposing           = 1
+	NotProposing        = 2
 )
 
 type ProposalNumber struct {
@@ -58,28 +60,18 @@ func FindMaxProposal(seen_np []int) int {
 	return maxNumber
 }
 
-func FindValue(seen_na []ProposalNumber, seen_va []interface{}, majority int) (int, bool) {
+func FindValue(seen_na []ProposalNumber) int {
 	var maxNumber ProposalNumber
 	var maxNumberIdx int
-	cnt := 0
 	for idx, e := range seen_na {
 		if idx == 0 || e.Number > maxNumber.Number {
-			cnt = 0
 			maxNumberIdx = idx
 			maxNumber = e
 		} else if e.Number == maxNumber.Number && e.Id != maxNumber.Id {
 			//log.Printf("Replica %v and %v finish accept phase on same proposal number %v", e.Id, maxNumber.Id, e.Number)
-		} else if e.Number == maxNumber.Number && e.Id == maxNumber.Id {
-			if seen_va[maxNumberIdx] == seen_va[idx] {
-				cnt += 1
-			}
 		}
 	}
-	if cnt >= majority {
-		return maxNumberIdx, true
-	} else {
-		return maxNumberIdx, false
-	}
+	return maxNumberIdx
 }
 
 // todo: local prepare?
@@ -87,12 +79,6 @@ func FindValue(seen_na []ProposalNumber, seen_va []interface{}, majority int) (i
 func (px *Paxos) LocalAccept(seq int, v interface{}, n ProposalNumber) bool {
 	px.mu.Lock()
 	defer px.mu.Unlock()
-	if _, ok := px.impl.np[seq]; !ok {
-		px.impl.np[seq] = n
-		px.impl.na[seq] = n
-		px.impl.va[seq] = v
-		return true
-	}
 	if n.Number > px.impl.np[seq].Number {
 		px.impl.np[seq] = n
 		px.impl.na[seq] = n
@@ -105,7 +91,7 @@ func (px *Paxos) LocalAccept(seq int, v interface{}, n ProposalNumber) bool {
 			px.impl.va[seq] = v
 			return true
 		} else {
-			//log.Printf("Proposer %v and Proposer %v both enter accept phase on seq %v with proposal number %v", px.impl.np[seq].Id, n.Id, seq, n.Number)
+			//log.Printf("Proposer %v and Proposer %v both enter accept phase with proposal number %v", px.impl.np[seq].Id, n.Id, n.Number)
 			return false
 		}
 	} else {
@@ -113,59 +99,51 @@ func (px *Paxos) LocalAccept(seq int, v interface{}, n ProposalNumber) bool {
 	}
 }
 
-func (px *Paxos) LocalLearn(seq int, v interface{}, n ProposalNumber) bool {
+func (px *Paxos) LocalLearn(seq int, v interface{}) bool {
 	px.mu.Lock()
 	defer px.mu.Unlock()
 	// if Seq not in log and Seq is greater than local highest done seq number, succeed
 	if seq > px.impl.localDone {
 		if _, ok := px.impl.instanceLog[seq]; ok {
-			if px.impl.instanceLog[seq] == v {
-				px.impl.np[seq] = n
-				px.impl.na[seq] = n
-				px.impl.va[seq] = v
-				return true
-			} else {
-				//log.Printf("Requested decide for Seq %v on replica %v but Seq already in log with different value %s", seq, px.me, px.impl.instanceLog[seq])
-				return false
-			}
+			return true
 		} else {
-			px.impl.np[seq] = n
-			px.impl.na[seq] = n
-			px.impl.va[seq] = v
 			px.impl.instanceLog[seq] = v
 			return true
 		}
 	} else {
-		//log.Printf("Requested decide for Seq %v on replica %v but localDone is %v", seq, px.me, px.impl.localDone)
 		return false
 	}
 }
 
-func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *ProposalNumber) (bool, interface{}, bool) {
+func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *ProposalNumber) (bool, interface{}) {
 	px.mu.Lock()
 	var seen_na []ProposalNumber
 	var seen_va []interface{}
-	majorityCopy := len(px.peers)/2 + 1
 	majority := len(px.peers)/2 + 1
 	if len(*seen_np) == 0 {
 		if _, isPromised := px.impl.np[seq]; isPromised {
 			n.Number = px.impl.np[seq].Number + 1
 		} else {
 			n.Number = StartProposalNumber
-			//defer px.mu.Unlock()
-			//return true, v
 		}
 	} else {
 		n.Number = FindMaxProposal(*seen_np) + 1
 	}
 	px.mu.Unlock()
+	//log.Printf("Start prepare on proposer %v for seq %v with value %v proposal number %v", px.me, seq, v, n.Number)
 	// send prepare to all servers
 	for _, replica := range px.peers {
+		//if idx == px.me {
+		//	majority -= 1
+		//	//selfPrepare()
+		//} else {
+		//
+		//}
 		var prepareArgs = new(PrepareArgs)
 		var prepareReply = new(PrepareReply)
 		prepareArgs.Seq = seq
 		prepareArgs.N = *n
-		ok := common.Call(replica, "Paxos.Prepare", prepareArgs, prepareReply)
+		ok := common.Call(replica, "Paxos.Prepare", &prepareArgs, &prepareReply)
 		if ok {
 			*seen_np = append(*seen_np, prepareReply.Np.Number)
 			if prepareReply.Response == OK {
@@ -175,27 +153,17 @@ func (px *Paxos) PreparePhase(seq int, v interface{}, seen_np *[]int, n *Proposa
 			} else if prepareReply.Response == EmptyOK {
 				majority -= 1
 			}
-			if majority <= 0 {
-				if len(seen_na) == 0 {
-					return true, v, false
-				} else {
-					idx, canSkipAccept := FindValue(seen_na, seen_va, majorityCopy)
-					if canSkipAccept {
-						return true, seen_va[idx], canSkipAccept
-					}
-				}
-			}
 		}
 	}
 	if majority <= 0 {
 		if len(seen_na) == 0 {
-			return true, v, false
+			return true, v
 		} else {
-			idx, canSkipAccept := FindValue(seen_na, seen_va, majorityCopy)
-			return true, seen_va[idx], canSkipAccept
+			idx := FindValue(seen_na)
+			return true, seen_va[idx]
 		}
 	} else {
-		return false, v, false
+		return false, v
 	}
 }
 
@@ -206,9 +174,6 @@ func (px *Paxos) AcceptPhase(seq int, v interface{}, n ProposalNumber) bool {
 			if px.LocalAccept(seq, v, n) {
 				majority -= 1
 			}
-			if majority <= 0 {
-				return true
-			}
 			continue
 		}
 		var acceptArgs = new(AcceptArgs)
@@ -216,13 +181,10 @@ func (px *Paxos) AcceptPhase(seq int, v interface{}, n ProposalNumber) bool {
 		acceptArgs.Seq = seq
 		acceptArgs.N = n
 		acceptArgs.V = v
-		ok := common.Call(replica, "Paxos.Accept", acceptArgs, acceptReply)
+		ok := common.Call(replica, "Paxos.Accept", &acceptArgs, &acceptReply)
 		if ok {
 			if acceptReply.Response == OK {
 				majority -= 1
-			}
-			if majority <= 0 {
-				return true
 			}
 		}
 	}
@@ -236,7 +198,7 @@ func (px *Paxos) AcceptPhase(seq int, v interface{}, n ProposalNumber) bool {
 func (px *Paxos) LearnPhase(seq int, v interface{}, n ProposalNumber) {
 	for idx, replica := range px.peers {
 		if idx == px.me {
-			px.LocalLearn(seq, v, n)
+			px.LocalLearn(seq, v)
 			continue
 		}
 		var decidedArgs = new(DecidedArgs)
@@ -244,7 +206,7 @@ func (px *Paxos) LearnPhase(seq int, v interface{}, n ProposalNumber) {
 		decidedArgs.Seq = seq
 		decidedArgs.V = v
 		decidedArgs.N = n
-		ok := common.Call(replica, "Paxos.Learn", decidedArgs, decidedReply)
+		ok := common.Call(replica, "Paxos.Learn", &decidedArgs, &decidedReply)
 		if ok {
 			px.mu.Lock()
 			px.impl.peersDone[idx] = decidedReply.Done
@@ -258,7 +220,7 @@ func (px *Paxos) Proposer(seq int, v interface{}) {
 	var seen_np []int
 	var n ProposalNumber
 	n.Id = px.me
-	for !px.isdead() {
+	for {
 		px.mu.Lock()
 		_, isDecided := px.impl.instanceLog[seq]
 		px.mu.Unlock()
@@ -267,19 +229,16 @@ func (px *Paxos) Proposer(seq int, v interface{}) {
 		}
 		// phase 1: Prepare
 		isPrepare := false
-		canSkipAccept := false
 		for !isPrepare {
-			duration := time.Duration(1 * (2 * px.me))
+			duration := time.Duration(10 * (px.me + 1))
 			time.Sleep(duration * time.Millisecond)
-			isPrepare, v, canSkipAccept = px.PreparePhase(seq, v, &seen_np, &n)
+			isPrepare, v = px.PreparePhase(seq, v, &seen_np, &n)
 		}
 		// phase 2: Accept
 		//log.Printf("Start accept on proposer %v for seq %v with value %v", px.me, seq, v)
-		if !canSkipAccept {
-			isAccept := px.AcceptPhase(seq, v, n)
-			if !isAccept {
-				continue
-			}
+		isAccept := px.AcceptPhase(seq, v, n)
+		if !isAccept {
+			continue
 		}
 		// phase 3: Learn
 		//log.Printf("Start learn on proposer %v for seq %v with value %v", px.me, seq, v)
@@ -324,9 +283,7 @@ func (px *Paxos) Forget() {
 //
 func (px *Paxos) Start(seq int, v interface{}) {
 	// Start a thread for proposer
-	if !px.isdead() {
-		go px.Proposer(seq, v)
-	}
+	go px.Proposer(seq, v)
 }
 
 //
@@ -341,6 +298,7 @@ func (px *Paxos) Done(seq int) {
 	px.impl.localDone = seq
 	px.impl.peersDone[px.me] = seq
 	px.mu.Unlock()
+	px.Forget()
 }
 
 //
@@ -360,16 +318,6 @@ func (px *Paxos) Max() int {
 			maxNumber = seq
 		}
 	}
-	// for seq, _ := range px.impl.np {
-	// 	if seq > maxNumber {
-	// 		maxNumber = seq
-	// 	}
-	// }
-	// for seq, _ := range px.impl.na {
-	// 	if seq > maxNumber {
-	// 		maxNumber = seq
-	// 	}
-	// }
 	return maxNumber
 }
 
@@ -429,12 +377,9 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 	} else {
 		if len(px.impl.instanceLog) == 0 {
 			defer px.mu.Unlock()
-			if seq <= px.impl.localDone {
-				return Forgotten, nil
-			}
 			return Pending, nil
 		} else {
-			minSeq := -1
+			var minSeq int
 			for minSeq = range px.impl.instanceLog {
 				break
 			}
@@ -452,35 +397,4 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 			}
 		}
 	}
-}
-
-// Part B
-
-func (px *Paxos) NextSeq() (int, bool) {
-	nextSeq := -1
-	localMax := px.Max()
-	for idx, replica := range px.peers {
-		if idx == px.me && localMax > nextSeq {
-			nextSeq = localMax
-			continue
-		}
-		var getMaxArgs = new(GetMaxArgs)
-		var getMaxReply = new(GetMaxReply)
-		ok := common.Call(replica, "Paxos.GetMax", getMaxArgs, getMaxReply)
-		if ok && getMaxReply.Max > nextSeq {
-			nextSeq = getMaxReply.Max
-		}
-	}
-	isLocalMax := true
-	if nextSeq > localMax {
-		isLocalMax = false
-	}
-	nextSeq += 1
-	return nextSeq, isLocalMax
-}
-
-func (px *Paxos) GetLocalDone() int {
-	px.mu.Lock()
-	defer px.mu.Unlock()
-	return px.impl.localDone
 }
