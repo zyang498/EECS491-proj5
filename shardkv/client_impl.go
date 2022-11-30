@@ -26,13 +26,14 @@ func (ck *Clerk) InitImpl() {
 func (ck *Clerk) Get(key string) string {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
+	requestId := int(common.Nrand())
 	config := ck.sm.Query(-1)
 	shard := common.Key2Shard(key)
 	servers := config.Groups[config.Shards[shard]]
 	args := &GetArgs{
 		Key: key,
 		Impl: GetArgsImpl{
-			RequestId: int(common.Nrand()),
+			RequestId: requestId,
 		},
 	}
 	var reply GetReply
@@ -64,6 +65,7 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
+	requestId := int(common.Nrand())
 	config := ck.sm.Query(-1)
 	shard := common.Key2Shard(key)
 	servers := config.Groups[config.Shards[shard]]
@@ -72,12 +74,13 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Value: value,
 		Op:    op,
 		Impl: PutAppendArgsImpl{
-			RequestId: int(common.Nrand()),
+			RequestId: requestId,
 		},
 	}
 	var reply PutAppendReply
 	i := 0
 	for {
+		//log.Printf("%v Sending %v rpc to group %v servers %v with key %v value %v", args.Impl.RequestId, op, config.Shards[shard], servers[i], key, value)
 		ok := common.Call(servers[i], "ShardKV.PutAppend", args, &reply)
 		if ok {
 			if reply.Err == OK {

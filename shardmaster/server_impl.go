@@ -242,7 +242,7 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 }
 
 func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) [common.NShards]int64 {
-	// addition join
+	// addition join todo: whether to rebalance when duplicate join
 	if _, ok := sm.impl.ShardDistribution[joiner]; ok {
 		return shards
 	}
@@ -267,7 +267,7 @@ func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) 
 }
 
 func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64) [common.NShards]int64 {
-	// addition leave
+	// addition leave todo: rebalance
 	if _, ok := sm.impl.ShardDistribution[leaver]; !ok {
 		return shards
 	}
@@ -399,8 +399,9 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 }
 
 func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64, groups map[int64][]string, servers []string) {
+	requestId := int(common.Nrand())
 	args := &common.DonateDataArgs{
-		RequestId: int(common.Nrand()),
+		RequestId: requestId,
 		ConfigNum: configNum,
 		Shards:    shards,
 		Groups:    groups,
@@ -417,21 +418,21 @@ func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64
 }
 
 func (sm *ShardMaster) sendAcceptRPC(configNum int, shards [common.NShards]int64, database map[string]string, handledId map[int]bool, servers []string) {
-	args := &common.AcceptDataArgs{
-		RequestId: int(common.Nrand()),
-		ConfigNum: configNum,
-		Shards:    shards,
-		Database:  database,
-		HandledId: handledId,
-	}
-	var reply common.AcceptDataReply
-	i := 0
-	ok := common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
-	for !ok {
-		i += 1
-		i = i % len(servers)
-		time.Sleep(10 * time.Millisecond)
-		ok = common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+	for i := 0; i < len(servers); i++ {
+		requestId := int(common.Nrand())
+		args := &common.AcceptDataArgs{
+			RequestId: requestId,
+			ConfigNum: configNum,
+			Shards:    shards,
+			Database:  database,
+			HandledId: handledId,
+		}
+		var reply common.AcceptDataReply
+		ok := common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+		for !ok {
+			time.Sleep(10 * time.Millisecond)
+			ok = common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+		}
 	}
 }
 
