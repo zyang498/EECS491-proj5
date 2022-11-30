@@ -1,6 +1,7 @@
 package shardkv
 
 import (
+	"time"
 	"umich.edu/eecs491/proj5/common"
 )
 
@@ -52,6 +53,7 @@ func (ck *Clerk) Get(key string) string {
 				i = 0
 			}
 		} else {
+			time.Sleep(5 * time.Millisecond)
 			i += 1
 			i = i % len(servers)
 		}
@@ -92,6 +94,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				i = 0
 			}
 		} else {
+			time.Sleep(5 * time.Millisecond)
 			i += 1
 			i = i % len(servers)
 		}

@@ -4,7 +4,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
 	"umich.edu/eecs491/proj5/paxos"
 )
 
@@ -12,15 +11,15 @@ import (
 // additions to PaxosRSM state
 //
 type PaxosRSMImpl struct {
-	currSeq int
-	mu      sync.Mutex
+	mu  sync.Mutex
+	seq int
 }
 
 //
 // initialize rsm.impl.*
 //
 func (rsm *PaxosRSM) InitRSMImpl() {
-	rsm.impl.currSeq = 0
+	rsm.impl.seq = 0
 }
 
 //
@@ -28,30 +27,33 @@ func (rsm *PaxosRSM) InitRSMImpl() {
 // AddOp returns only once value v has been decided for some Paxos instance
 //
 func (rsm *PaxosRSM) AddOp(v interface{}) {
-	// callback
 	rsm.impl.mu.Lock()
 	defer rsm.impl.mu.Unlock()
-	defer rsm.applyOp(v)
-	for true {
-		rsm.px.Start(rsm.impl.currSeq, v)
+	for {
+		rsm.px.Start(rsm.impl.seq, v)
 		to := 10 * time.Millisecond
 		for {
-			status, val := rsm.px.Status(rsm.impl.currSeq)
-			if status == paxos.Decided {
-				rsm.px.Done(rsm.impl.currSeq)
-				rsm.impl.currSeq++
-				if rsm.equals(val, v) { // successfully find a slot
-					return
-				} else {
-					rsm.applyOp(val)
-				}
-				break
-			} else if status == paxos.Forgotten {
-				log.Println("Error: forgotten but still needed")
-			}
 			time.Sleep(to)
 			if to < 10*time.Second {
 				to *= 2
+			}
+			status, value := rsm.px.Status(rsm.impl.seq)
+			if status == paxos.Pending {
+				continue
+			} else if status == paxos.Forgotten {
+				log.Printf("----------------------Should never get here------------------------")
+				rsm.impl.seq += 1
+			} else {
+				//log.Printf("2 seq %v value %v", rsm.impl.seq, value)
+				//log.Printf("2 seq %v v %v", rsm.impl.seq, v)
+				rsm.applyOp(value)
+				rsm.impl.seq += 1
+				if rsm.equals(v, value) {
+					rsm.px.Done(rsm.impl.seq - 1)
+					return
+				} else {
+					break
+				}
 			}
 		}
 	}

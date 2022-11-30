@@ -65,6 +65,10 @@ func (kv *ShardKV) InitImpl() {
 // RPC handler for client Get requests
 //
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
+	if kv.isdead() {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
 	if v, found := kv.impl.HandledId[args.Impl.RequestId]; found && v {
@@ -103,6 +107,10 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 // RPC handler for client Put and Append requests
 //
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
+	if kv.isdead() {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
 	//log.Printf("%v Server %v of group %v received %v rpc with key %v value %v", args.Impl.RequestId, kv.me, kv.gid, args.Op, args.Key, args.Value)
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
@@ -157,33 +165,8 @@ func (kv *ShardKV) ApplyOp(v interface{}) {
 				kv.impl.Database[op.Key] = op.Value
 			}
 		} else if op.Operation == Donate {
-			acceptors := make(map[int64][]int)
-			for i := 0; i < common.NShards; i++ {
-				if op.Shards[i] != kv.gid && kv.impl.Shards[i] == kv.gid {
-					if v, ok := acceptors[op.Shards[i]]; ok {
-						acceptors[op.Shards[i]] = append(v, i)
-					} else {
-						acceptors[op.Shards[i]] = []int{i}
-					}
-				}
-			}
 			kv.impl.Shards = op.Shards
 			kv.impl.ConfigNum = op.ConfigNum
-			for group, list := range acceptors {
-				database := make(map[string]string)
-				handledId := make(map[int]bool)
-				for k, v := range kv.impl.Database {
-					shard := common.Key2Shard(k)
-					if common.Contains(list, shard) {
-						database[k] = v
-						delete(kv.impl.Database, k)
-					}
-				}
-				for k, v := range kv.impl.HandledId {
-					handledId[k] = v
-				}
-				kv.sendAcceptRPC(op.ConfigNum, op.Shards, database, handledId, op.Groups[group])
-			}
 		} else if op.Operation == Accept {
 			kv.impl.Shards = op.Shards
 			kv.impl.ConfigNum = op.ConfigNum
@@ -208,7 +191,9 @@ func (kv *ShardKV) sendAcceptRPC(configNum int, shards [common.NShards]int64, da
 	}
 	var reply common.AcceptDataReply
 	i := 0
+	//log.Printf("3 servers %v", servers)
 	ok := common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+	//log.Printf("4 ok %v reply %v", ok, reply)
 	for !ok {
 		i += 1
 		i = i % len(servers)
@@ -222,6 +207,10 @@ func (kv *ShardKV) sendAcceptRPC(configNum int, shards [common.NShards]int64, da
 //
 
 func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateDataReply) error {
+	if kv.isdead() {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Donate,
@@ -230,10 +219,32 @@ func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateD
 		Groups:    args.Groups,
 	}
 	kv.rsm.AddOp(op)
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	for group, list := range args.AcceptorDict {
+		database := make(map[string]string)
+		handledId := make(map[int]bool)
+		for k, v := range kv.impl.Database {
+			shard := common.Key2Shard(k)
+			if common.Contains(list, shard) {
+				database[k] = v
+				delete(kv.impl.Database, k)
+			}
+		}
+		for k, v := range kv.impl.HandledId {
+			handledId[k] = v
+		}
+		kv.sendAcceptRPC(op.ConfigNum, op.Shards, database, handledId, op.Groups[group])
+	}
+	reply.Err = OK
 	return nil
 }
 
 func (kv *ShardKV) AcceptData(args *common.AcceptDataArgs, reply *common.AcceptDataReply) error {
+	if kv.isdead() {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Accept,
@@ -243,5 +254,6 @@ func (kv *ShardKV) AcceptData(args *common.AcceptDataArgs, reply *common.AcceptD
 		HandledId: args.HandledId,
 	}
 	kv.rsm.AddOp(op)
+	reply.Err = OK
 	return nil
 }

@@ -338,7 +338,8 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			sm.sendAcceptRPC(config.Num, shards, database, handledId, sendGroups[shards[0]])
 		} else if len(donors) > 0 {
 			for i := range donors {
-				sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+				acceptorDict := sm.findAcceptors(lastConfig, config, donors[i])
+				sm.sendDonateRPC(config.Num, config.Shards, sendGroups, acceptorDict, sendGroups[donors[i]])
 			}
 		}
 	} else if op.Operation == Leave {
@@ -364,7 +365,8 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			sendGroups[k] = v
 		}
 		for i := range donors {
-			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+			acceptorDict := sm.findAcceptors(lastConfig, config, donors[i])
+			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, acceptorDict, sendGroups[donors[i]])
 		}
 	} else {
 		if _, ok := lastConfig.Groups[op.GID]; !ok {
@@ -393,23 +395,25 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			sendGroups[k] = v
 		}
 		for i := range donors {
-			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+			acceptorDict := sm.findAcceptors(lastConfig, config, donors[i])
+			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, acceptorDict, sendGroups[donors[i]])
 		}
 	}
 }
 
-func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64, groups map[int64][]string, servers []string) {
+func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64, groups map[int64][]string, acceptorDict map[int64][]int, servers []string) {
 	requestId := int(common.Nrand())
 	args := &common.DonateDataArgs{
-		RequestId: requestId,
-		ConfigNum: configNum,
-		Shards:    shards,
-		Groups:    groups,
+		RequestId:    requestId,
+		ConfigNum:    configNum,
+		Shards:       shards,
+		Groups:       groups,
+		AcceptorDict: acceptorDict,
 	}
 	var reply common.DonateDataReply
 	i := 0
 	ok := common.Call(servers[i], "ShardKV.DonateData", args, &reply)
-	for !ok {
+	for !ok || (ok && reply.Err != common.OK) {
 		i += 1
 		i = i % len(servers)
 		time.Sleep(10 * time.Millisecond)
@@ -434,6 +438,22 @@ func (sm *ShardMaster) sendAcceptRPC(configNum int, shards [common.NShards]int64
 			ok = common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
 		}
 	}
+}
+
+func (sm *ShardMaster) findAcceptors(lastConfig Config, config Config, donor int64) map[int64][]int {
+	acceptorDict := make(map[int64][]int)
+	lastShards := lastConfig.Shards
+	shards := config.Shards
+	for i := 0; i < common.NShards; i++ {
+		if shards[i] != donor && lastShards[i] == donor {
+			if v, ok := acceptorDict[shards[i]]; ok {
+				acceptorDict[shards[i]] = append(v, i)
+			} else {
+				acceptorDict[shards[i]] = []int{i}
+			}
+		}
+	}
+	return acceptorDict
 }
 
 func (sm *ShardMaster) findDonors(lastConfig Config, config Config) []int64 {

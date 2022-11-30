@@ -5,14 +5,24 @@ package common
 // creating circular dependencies
 //
 
+const (
+	OK            = "OK"
+	ErrNoKey      = "ErrNoKey"
+	ErrWrongGroup = "ErrWrongGroup"
+)
+
+type Err string
+
 type DonateDataArgs struct {
-	RequestId int
-	ConfigNum int
-	Shards    [NShards]int64
-	Groups    map[int64][]string
+	RequestId    int
+	ConfigNum    int
+	Shards       [NShards]int64
+	Groups       map[int64][]string
+	AcceptorDict map[int64][]int
 }
 
 type DonateDataReply struct {
+	Err Err
 }
 
 type AcceptDataArgs struct {
@@ -24,6 +34,7 @@ type AcceptDataArgs struct {
 }
 
 type AcceptDataReply struct {
+	Err Err
 }
 
 func Contains(s []int, e int) bool {
