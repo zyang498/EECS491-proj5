@@ -150,7 +150,7 @@ func (kv *ShardKV) ApplyOp(v interface{}) {
 				kv.impl.Database[op.Key] = op.Value
 			}
 		} else if op.Operation == Donate {
-			var acceptors map[int64][]int
+			acceptors := make(map[int64][]int)
 			for i := 0; i < common.NShards; i++ {
 				if op.Shards[i] != kv.gid && kv.impl.Shards[i] == kv.gid {
 					if v, ok := acceptors[op.Shards[i]]; ok {
@@ -190,14 +190,14 @@ func (kv *ShardKV) ApplyOp(v interface{}) {
 }
 
 func (kv *ShardKV) sendAcceptRPC(configNum int, shards [common.NShards]int64, database map[string]string, handledId map[int]bool, servers []string) {
-	args := &AcceptDataArgs{
+	args := &common.AcceptDataArgs{
 		RequestId: int(common.Nrand()),
 		ConfigNum: configNum,
 		Shards:    shards,
 		Database:  database,
 		HandledId: handledId,
 	}
-	var reply AcceptDataReply
+	var reply common.AcceptDataReply
 	i := 0
 	ok := common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
 	for !ok {
@@ -212,7 +212,7 @@ func (kv *ShardKV) sendAcceptRPC(configNum int, shards [common.NShards]int64, da
 // Add RPC handlers for any other RPCs you introduce
 //
 
-func (kv *ShardKV) DonateData(args common.DonateDataArgs, reply common.DonateDataReply) error {
+func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateDataReply) error {
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Donate,
@@ -224,7 +224,7 @@ func (kv *ShardKV) DonateData(args common.DonateDataArgs, reply common.DonateDat
 	return nil
 }
 
-func (kv *ShardKV) AcceptData(args AcceptDataArgs, reply AcceptDataReply) error {
+func (kv *ShardKV) AcceptData(args *common.AcceptDataArgs, reply *common.AcceptDataReply) error {
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Accept,

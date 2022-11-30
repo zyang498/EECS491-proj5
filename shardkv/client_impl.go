@@ -1,6 +1,8 @@
 package shardkv
 
-import "umich.edu/eecs491/proj5/common"
+import (
+	"umich.edu/eecs491/proj5/common"
+)
 
 //
 // additions to Clerk state

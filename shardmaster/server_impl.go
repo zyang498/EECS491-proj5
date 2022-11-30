@@ -332,8 +332,14 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 		for k, v := range config.Groups {
 			sendGroups[k] = v
 		}
-		for i := range donors {
-			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+		if len(donors) == 0 && config.Num == 1 {
+			database := make(map[string]string)
+			handledId := make(map[int]bool)
+			sm.sendAcceptRPC(config.Num, shards, database, handledId, sendGroups[shards[0]])
+		} else if len(donors) > 0 {
+			for i := range donors {
+				sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+			}
 		}
 	} else if op.Operation == Leave {
 		groups := make(map[int64][]string)
@@ -354,7 +360,7 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 		// Part B
 		donors := sm.findDonors(lastConfig, config)
 		sendGroups := make(map[int64][]string)
-		for k, v := range config.Groups {
+		for k, v := range lastConfig.Groups {
 			sendGroups[k] = v
 		}
 		for i := range donors {
@@ -393,7 +399,7 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 }
 
 func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64, groups map[int64][]string, servers []string) {
-	args := common.DonateDataArgs{
+	args := &common.DonateDataArgs{
 		RequestId: int(common.Nrand()),
 		ConfigNum: configNum,
 		Shards:    shards,
@@ -410,15 +416,41 @@ func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64
 	}
 }
 
+func (sm *ShardMaster) sendAcceptRPC(configNum int, shards [common.NShards]int64, database map[string]string, handledId map[int]bool, servers []string) {
+	args := &common.AcceptDataArgs{
+		RequestId: int(common.Nrand()),
+		ConfigNum: configNum,
+		Shards:    shards,
+		Database:  database,
+		HandledId: handledId,
+	}
+	var reply common.AcceptDataReply
+	i := 0
+	ok := common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+	for !ok {
+		i += 1
+		i = i % len(servers)
+		time.Sleep(10 * time.Millisecond)
+		ok = common.Call(servers[i], "ShardKV.AcceptData", args, &reply)
+	}
+}
+
 func (sm *ShardMaster) findDonors(lastConfig Config, config Config) []int64 {
+	var donors []int64
+	if lastConfig.Num == 0 {
+		return donors
+	}
 	lastShards := lastConfig.Shards
 	shards := config.Shards
 	lastDict := sm.findDistribution(lastShards)
 	dict := sm.findDistribution(shards)
-	var donors []int64
 	for group := range lastDict {
-		if _, ok := dict[group]; ok && lastDict[group] > dict[group] {
-			donors = append(donors, group)
+		if _, ok := lastDict[group]; ok {
+			if _, ok := dict[group]; ok && lastDict[group] > dict[group] {
+				donors = append(donors, group)
+			} else if !ok {
+				donors = append(donors, group)
+			}
 		}
 	}
 	return donors
