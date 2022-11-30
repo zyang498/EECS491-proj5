@@ -8,6 +8,7 @@ package shardkv
 //
 type PutAppendArgsImpl struct {
 	RequestId int
+	ConfigNum int
 }
 
 //
@@ -15,6 +16,7 @@ type PutAppendArgsImpl struct {
 //
 type GetArgsImpl struct {
 	RequestId int
+	ConfigNum int
 }
 
 //

@@ -1,6 +1,7 @@
 package shardkv
 
 import (
+	"log"
 	"time"
 	"umich.edu/eecs491/proj5/common"
 )
@@ -75,7 +76,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 		kv.mu.Unlock()
 		return nil
 	}
-	if kv.impl.Shards[shard] != kv.gid {
+	if !kv.isNewConfig(args.Impl.ConfigNum) && kv.impl.Shards[shard] != kv.gid {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return nil
@@ -118,7 +119,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 		kv.mu.Unlock()
 		return nil
 	}
-	if kv.impl.Shards[shard] != kv.gid {
+	if !kv.isNewConfig(args.Impl.ConfigNum) && kv.impl.Shards[shard] != kv.gid {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return nil
@@ -165,16 +166,20 @@ func (kv *ShardKV) ApplyOp(v interface{}) {
 				kv.impl.Database[op.Key] = op.Value
 			}
 		} else if op.Operation == Donate {
-			kv.impl.Shards = op.Shards
-			kv.impl.ConfigNum = op.ConfigNum
-		} else if op.Operation == Accept {
-			kv.impl.Shards = op.Shards
-			kv.impl.ConfigNum = op.ConfigNum
-			for k, v := range op.Database {
-				kv.impl.Database[k] = v
+			if kv.isNewConfig(op.ConfigNum) {
+				kv.impl.Shards = op.Shards
+				kv.impl.ConfigNum = op.ConfigNum
 			}
-			for k, v := range op.HandledId {
-				kv.impl.HandledId[k] = v
+		} else if op.Operation == Accept {
+			if kv.isNewConfig(op.ConfigNum) {
+				kv.impl.Shards = op.Shards
+				kv.impl.ConfigNum = op.ConfigNum
+				for k, v := range op.Database {
+					kv.impl.Database[k] = v
+				}
+				for k, v := range op.HandledId {
+					kv.impl.HandledId[k] = v
+				}
 			}
 		}
 	}
@@ -206,11 +211,27 @@ func (kv *ShardKV) sendAcceptRPC(configNum int, shards [common.NShards]int64, da
 // Add RPC handlers for any other RPCs you introduce
 //
 
+func (kv *ShardKV) isNewConfig(num int) bool {
+	if num >= kv.impl.ConfigNum {
+		return true
+	} else {
+		return false
+	}
+}
+
 func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateDataReply) error {
 	if kv.isdead() {
 		reply.Err = ErrWrongGroup
 		return nil
 	}
+	kv.mu.Lock()
+	if !kv.isNewConfig(args.ConfigNum) {
+		log.Printf("----------------------Should never get here------------------------")
+		reply.Err = OK
+		kv.mu.Unlock()
+		return nil
+	}
+	kv.mu.Unlock()
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Donate,
@@ -241,10 +262,19 @@ func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateD
 }
 
 func (kv *ShardKV) AcceptData(args *common.AcceptDataArgs, reply *common.AcceptDataReply) error {
+	//log.Printf("1 %v Receive acceptRPC on server %v of group %v, confignum %v, database %v, shards %v", args.RequestId, kv.me, kv.gid, args.ConfigNum, args.Database, args.Shards)
 	if kv.isdead() {
 		reply.Err = ErrWrongGroup
 		return nil
 	}
+	kv.mu.Lock()
+	if !kv.isNewConfig(args.ConfigNum) {
+		reply.Err = OK
+		kv.mu.Unlock()
+		return nil
+	}
+	kv.mu.Unlock()
+	//log.Printf("2 %v Receive acceptRPC on server %v of group %v, confignum %v, database %v, shards %v", args.RequestId, kv.me, kv.gid, args.ConfigNum, args.Database, args.Shards)
 	op := Op{
 		RequestId: args.RequestId,
 		Operation: Accept,

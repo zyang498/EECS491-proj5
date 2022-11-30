@@ -419,6 +419,7 @@ func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64
 		time.Sleep(10 * time.Millisecond)
 		ok = common.Call(servers[i], "ShardKV.DonateData", args, &reply)
 	}
+	//log.Printf("%v Sent donateRPC to server %v with confignum %v, shards %v, acceptordict %v", requestId, servers[i], configNum, shards, acceptorDict)
 }
 
 func (sm *ShardMaster) sendAcceptRPC(configNum int, shards [common.NShards]int64, database map[string]string, handledId map[int]bool, servers []string) {
