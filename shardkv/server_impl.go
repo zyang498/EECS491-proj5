@@ -73,6 +73,17 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
 	if v, found := kv.impl.HandledId[args.Impl.RequestId]; found && v {
+		if kv.impl.Shards[shard] != kv.gid {
+			reply.Err = ErrWrongGroup
+		} else {
+			reply.Err = OK
+			if value, ok := kv.impl.Database[args.Key]; ok {
+				reply.Err = OK
+				reply.Value = value
+			} else {
+				reply.Err = ErrNoKey
+			}
+		}
 		kv.mu.Unlock()
 		return nil
 	}
@@ -116,6 +127,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
 	if v, found := kv.impl.HandledId[args.Impl.RequestId]; found && v {
+		reply.Err = OK
 		kv.mu.Unlock()
 		return nil
 	}
