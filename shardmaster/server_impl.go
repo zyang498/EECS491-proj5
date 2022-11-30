@@ -2,6 +2,7 @@ package shardmaster
 
 import (
 	"log"
+	"time"
 	"umich.edu/eecs491/proj5/common"
 )
 
@@ -325,6 +326,15 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			Groups: groups,
 		}
 		sm.configs = append(sm.configs, config)
+		// Part B
+		donors := sm.findDonors(lastConfig, config)
+		sendGroups := make(map[int64][]string)
+		for k, v := range config.Groups {
+			sendGroups[k] = v
+		}
+		for i := range donors {
+			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+		}
 	} else if op.Operation == Leave {
 		groups := make(map[int64][]string)
 		for key, value := range lastConfig.Groups {
@@ -341,6 +351,15 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			Groups: groups,
 		}
 		sm.configs = append(sm.configs, config)
+		// Part B
+		donors := sm.findDonors(lastConfig, config)
+		sendGroups := make(map[int64][]string)
+		for k, v := range config.Groups {
+			sendGroups[k] = v
+		}
+		for i := range donors {
+			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+		}
 	} else {
 		if _, ok := lastConfig.Groups[op.GID]; !ok {
 			log.Printf("Move to unknown group!")
@@ -361,5 +380,58 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 			Groups: groups,
 		}
 		sm.configs = append(sm.configs, config)
+		// Part B
+		donors := sm.findDonors(lastConfig, config)
+		sendGroups := make(map[int64][]string)
+		for k, v := range config.Groups {
+			sendGroups[k] = v
+		}
+		for i := range donors {
+			sm.sendDonateRPC(config.Num, config.Shards, sendGroups, sendGroups[donors[i]])
+		}
 	}
+}
+
+func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64, groups map[int64][]string, servers []string) {
+	args := common.DonateDataArgs{
+		RequestId: int(common.Nrand()),
+		ConfigNum: configNum,
+		Shards:    shards,
+		Groups:    groups,
+	}
+	var reply common.DonateDataReply
+	i := 0
+	ok := common.Call(servers[i], "ShardKV.DonateData", args, &reply)
+	for !ok {
+		i += 1
+		i = i % len(servers)
+		time.Sleep(10 * time.Millisecond)
+		ok = common.Call(servers[i], "ShardKV.DonateData", args, &reply)
+	}
+}
+
+func (sm *ShardMaster) findDonors(lastConfig Config, config Config) []int64 {
+	lastShards := lastConfig.Shards
+	shards := config.Shards
+	lastDict := sm.findDistribution(lastShards)
+	dict := sm.findDistribution(shards)
+	var donors []int64
+	for group := range lastDict {
+		if _, ok := dict[group]; ok && lastDict[group] > dict[group] {
+			donors = append(donors, group)
+		}
+	}
+	return donors
+}
+
+func (sm *ShardMaster) findDistribution(shards [common.NShards]int64) map[int64]int {
+	dict := make(map[int64]int)
+	for i := range shards {
+		if _, ok := dict[shards[i]]; ok {
+			dict[shards[i]] += 1
+		} else {
+			dict[shards[i]] = 1
+		}
+	}
+	return dict
 }
