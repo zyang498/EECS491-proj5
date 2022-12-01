@@ -2,6 +2,7 @@ package shardmaster
 
 import (
 	"log"
+	"sort"
 	"time"
 	"umich.edu/eecs491/proj5/common"
 )
@@ -18,6 +19,7 @@ const (
 )
 
 type Op struct {
+	RequestId int
 	Operation int
 	GID       int64
 	Servers   []string
@@ -31,31 +33,7 @@ type Op struct {
 func equals(v1 interface{}, v2 interface{}) bool {
 	op1 := v1.(Op)
 	op2 := v2.(Op)
-	if op1.Operation != op2.Operation {
-		return false
-	} else {
-		if op1.Operation == Join {
-			if op1.GID == op2.GID {
-				return true
-			}
-			return false
-		} else if op1.Operation == Leave {
-			if op1.GID == op2.GID {
-				return true
-			}
-			return false
-		} else if op1.Operation == Move {
-			if op1.GID == op2.GID && op1.Shard == op2.Shard {
-				return true
-			}
-			return false
-		} else {
-			if op1.ConfigNum == op2.ConfigNum {
-				return true
-			}
-			return false
-		}
-	}
+	return op1.RequestId == op2.RequestId
 }
 
 //
@@ -88,7 +66,9 @@ func (sm *ShardMaster) getLatestConfig() Config {
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	requestId := int(common.Nrand())
 	op := Op{
+		RequestId: requestId,
 		Operation: Join,
 		GID:       args.GID,
 		Servers:   args.Servers,
@@ -102,7 +82,9 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	requestId := int(common.Nrand())
 	op := Op{
+		RequestId: requestId,
 		Operation: Leave,
 		GID:       args.GID,
 		Servers:   nil,
@@ -116,7 +98,9 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	requestId := int(common.Nrand())
 	op := Op{
+		RequestId: requestId,
 		Operation: Move,
 		GID:       args.GID,
 		Servers:   nil,
@@ -130,7 +114,9 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	requestId := int(common.Nrand())
 	op := Op{
+		RequestId: requestId,
 		Operation: Query,
 		GID:       0,
 		Servers:   nil,
@@ -147,17 +133,28 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	return nil
 }
 
+func (sm *ShardMaster) sortMapKey(m map[int64]int) []int64 {
+	keys := make([]int64, 0)
+	for k, _ := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
+}
+
 func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, operation int) (map[int64]int, map[int64]int) {
 	donors := make(map[int64]int)
 	acceptors := make(map[int64]int)
 	groupSize := len(sm.impl.ShardDistribution)
+	orderKeys := sm.sortMapKey(sm.impl.ShardDistribution)
 	if groupSize <= 16 {
 		newVal := common.NShards / groupSize
 		balance := 0
-		if operation == Leave && donateVal > 0 {
+		if operation == Leave {
 			balance += donateVal
 		}
-		for group, val := range sm.impl.ShardDistribution {
+		for _, group := range orderKeys {
+			val := sm.impl.ShardDistribution[group]
 			if val > newVal+1 {
 				// find donors
 				donors[group] = val - newVal - 1
@@ -171,10 +168,11 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 			}
 		}
 		if balance > 0 {
-			for group, val := range sm.impl.ShardDistribution {
+			for _, group := range orderKeys {
 				if balance == 0 {
 					break
 				}
+				val := sm.impl.ShardDistribution[group]
 				if val == newVal {
 					if _, isAcceptor := acceptors[group]; isAcceptor {
 						acceptors[group] += 1
@@ -186,10 +184,11 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 				}
 			}
 		} else if balance < 0 {
-			for group, val := range sm.impl.ShardDistribution {
+			for _, group := range orderKeys {
 				if balance == 0 {
 					break
 				}
+				val := sm.impl.ShardDistribution[group]
 				if val == newVal+1 {
 					if _, isDonor := donors[group]; isDonor {
 						donors[group] += 1
@@ -201,33 +200,35 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 				}
 			}
 		}
-		if operation == Leave && donateVal > 0 {
+		if operation == Leave {
 			donors[leaver] = donateVal
 		}
 	} else {
 		newVal := 1
 		balance := 0
-		if operation == Leave && donateVal > 0 {
+		if operation == Leave {
 			balance += donateVal
 		}
-		for group, val := range sm.impl.ShardDistribution {
+		for _, group := range orderKeys {
+			val := sm.impl.ShardDistribution[group]
 			if val > newVal {
 				donors[group] = val - newVal
 				balance += val - newVal
 				sm.impl.ShardDistribution[group] = newVal
 			}
 		}
-		for group, val := range sm.impl.ShardDistribution {
+		for _, group := range orderKeys {
 			if balance == 0 {
 				break
 			}
+			val := sm.impl.ShardDistribution[group]
 			if val < newVal {
 				acceptors[group] = newVal - val
 				balance -= newVal - val
 				sm.impl.ShardDistribution[group] = newVal
 			}
 		}
-		if operation == Leave && donateVal > 0 {
+		if operation == Leave {
 			donors[leaver] = donateVal
 		}
 	}
@@ -244,22 +245,34 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 		log.Printf("Donation %v isn't equal to accpetion %v!", donors, acceptors)
 		log.Printf("Distribution is %v", sm.impl.ShardDistribution)
 	}
+	for k, v := range donors {
+		if v == 0 {
+			delete(donors, k)
+		}
+	}
+	for k, v := range acceptors {
+		if v == 0 {
+			delete(acceptors, k)
+		}
+	}
 	return donors, acceptors
 }
 
 func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) [common.NShards]int64 {
 	// addition join todo: whether to rebalance when duplicate join
-	if _, ok := sm.impl.ShardDistribution[joiner]; !ok {
-		sm.impl.ShardDistribution[joiner] = 0
+	if _, ok := sm.impl.ShardDistribution[joiner]; ok {
+		return shards
 	}
 	// change distribution
+	sm.impl.ShardDistribution[joiner] = 0
 	donors, acceptors := sm.findOptimalDistribution(0, 0, Join)
+	orderAcceptors := sm.sortMapKey(acceptors)
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
 			if vd > 0 {
 				donors[shards[i]] -= 1
-				for acceptor, va := range acceptors {
-					if va > 0 {
+				for _, acceptor := range orderAcceptors {
+					if acceptors[acceptor] > 0 {
 						shards[i] = acceptor
 						acceptors[acceptor] -= 1
 						break
@@ -273,19 +286,20 @@ func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) 
 
 func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64) [common.NShards]int64 {
 	// addition leave todo: rebalance
-	donateVal := 0
-	if _, ok := sm.impl.ShardDistribution[leaver]; ok {
-		donateVal = sm.impl.ShardDistribution[leaver]
-		delete(sm.impl.ShardDistribution, leaver)
+	if _, ok := sm.impl.ShardDistribution[leaver]; !ok {
+		return shards
 	}
 	// change distribution
+	donateVal := sm.impl.ShardDistribution[leaver]
+	delete(sm.impl.ShardDistribution, leaver)
 	donors, acceptors := sm.findOptimalDistribution(donateVal, leaver, Leave)
+	orderAcceptors := sm.sortMapKey(acceptors)
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
 			if vd > 0 {
 				donors[shards[i]] -= 1
-				for acceptor, va := range acceptors {
-					if va > 0 {
+				for _, acceptor := range orderAcceptors {
+					if acceptors[acceptor] > 0 {
 						shards[i] = acceptor
 						acceptors[acceptor] -= 1
 						break
@@ -469,13 +483,12 @@ func (sm *ShardMaster) findDonors(lastConfig Config, config Config) []int64 {
 	shards := config.Shards
 	lastDict := sm.findDistribution(lastShards)
 	dict := sm.findDistribution(shards)
-	for group := range lastDict {
-		if _, ok := lastDict[group]; ok {
-			if _, ok := dict[group]; ok && lastDict[group] > dict[group] {
-				donors = append(donors, group)
-			} else if !ok {
-				donors = append(donors, group)
-			}
+	orderLastDictKeys := sm.sortMapKey(lastDict)
+	for _, group := range orderLastDictKeys {
+		if _, ok := dict[group]; ok && lastDict[group] > dict[group] {
+			donors = append(donors, group)
+		} else if !ok {
+			donors = append(donors, group)
 		}
 	}
 	return donors
