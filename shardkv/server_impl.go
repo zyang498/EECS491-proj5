@@ -3,6 +3,7 @@ package shardkv
 import (
 	"log"
 	"time"
+
 	"umich.edu/eecs491/proj5/common"
 )
 
@@ -238,7 +239,7 @@ func (kv *ShardKV) DonateData(args *common.DonateDataArgs, reply *common.DonateD
 	}
 	kv.mu.Lock()
 	if !kv.isNewConfig(args.ConfigNum) {
-		log.Printf("----------------------Should never get here------------------------")
+		log.Printf("----------------------Should not get here------------------------")
 		reply.Err = OK
 		kv.mu.Unlock()
 		return nil

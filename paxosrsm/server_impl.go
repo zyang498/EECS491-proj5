@@ -1,9 +1,9 @@
 package paxosrsm
 
 import (
-	"log"
 	"sync"
 	"time"
+
 	"umich.edu/eecs491/proj5/paxos"
 )
 
@@ -43,7 +43,7 @@ func (rsm *PaxosRSM) AddOp(v interface{}) {
 			if status == paxos.Pending {
 				continue
 			} else if status == paxos.Forgotten {
-				log.Printf("----------------------Should never get here------------------------")
+				//log.Printf("----------------------Should never get here------------------------")
 				rsm.impl.seq += 1
 			} else {
 				//log.Printf("2 seq %v value %v", rsm.impl.seq, value)
