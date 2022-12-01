@@ -2,7 +2,6 @@ package shardmaster
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"os"
 	"runtime"
@@ -33,7 +32,6 @@ func cleanup(sma []*ShardMaster) {
 
 func check(t *testing.T, groups []int64, ck *Clerk) {
 	c := ck.Query(-1)
-	log.Printf("2")
 	if len(c.Groups) != len(groups) {
 		t.Fatalf("wanted %v groups, got %v", len(groups), len(c.Groups))
 	}
@@ -327,7 +325,6 @@ func TestUnreliable(t *testing.T) {
 	for i := 0; i < npara; i++ {
 		<-ca[i]
 	}
-	log.Printf("1")
 	check(t, gids, ck)
 
 	fmt.Printf("  ... Passed\n")

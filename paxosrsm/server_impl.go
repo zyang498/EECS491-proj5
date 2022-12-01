@@ -37,7 +37,9 @@ func (rsm *PaxosRSM) AddOp(v interface{}) {
 			if to < 10*time.Second {
 				to *= 2
 			}
+			//log.Printf("2.5 start on %v", rsm.impl.seq)
 			status, value := rsm.px.Status(rsm.impl.seq)
+			//log.Printf("2.5 start finishes on %v with status %v value %v", rsm.impl.seq, status, value)
 			if status == paxos.Pending {
 				continue
 			} else if status == paxos.Forgotten {

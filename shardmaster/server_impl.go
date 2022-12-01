@@ -86,6 +86,8 @@ func (sm *ShardMaster) getLatestConfig() Config {
 // RPC handlers for Join, Leave, Move, and Query RPCs
 //
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	op := Op{
 		Operation: Join,
 		GID:       args.GID,
@@ -98,6 +100,8 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	op := Op{
 		Operation: Leave,
 		GID:       args.GID,
@@ -110,6 +114,8 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	op := Op{
 		Operation: Move,
 		GID:       args.GID,
@@ -122,6 +128,8 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 }
 
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	op := Op{
 		Operation: Query,
 		GID:       0,
@@ -130,8 +138,6 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 		ConfigNum: args.Num,
 	}
 	sm.rsm.AddOp(op)
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	config := sm.getLatestConfig()
 	if args.Num == -1 || args.Num > config.Num {
 		reply.Config = config
@@ -148,7 +154,7 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 	if groupSize <= 16 {
 		newVal := common.NShards / groupSize
 		balance := 0
-		if operation == Leave {
+		if operation == Leave && donateVal > 0 {
 			balance += donateVal
 		}
 		for group, val := range sm.impl.ShardDistribution {
@@ -195,13 +201,13 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 				}
 			}
 		}
-		if operation == Leave {
+		if operation == Leave && donateVal > 0 {
 			donors[leaver] = donateVal
 		}
 	} else {
 		newVal := 1
 		balance := 0
-		if operation == Leave {
+		if operation == Leave && donateVal > 0 {
 			balance += donateVal
 		}
 		for group, val := range sm.impl.ShardDistribution {
@@ -221,7 +227,7 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 				sm.impl.ShardDistribution[group] = newVal
 			}
 		}
-		if operation == Leave {
+		if operation == Leave && donateVal > 0 {
 			donors[leaver] = donateVal
 		}
 	}
@@ -243,11 +249,10 @@ func (sm *ShardMaster) findOptimalDistribution(donateVal int, leaver int64, oper
 
 func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) [common.NShards]int64 {
 	// addition join todo: whether to rebalance when duplicate join
-	if _, ok := sm.impl.ShardDistribution[joiner]; ok {
-		return shards
+	if _, ok := sm.impl.ShardDistribution[joiner]; !ok {
+		sm.impl.ShardDistribution[joiner] = 0
 	}
 	// change distribution
-	sm.impl.ShardDistribution[joiner] = 0
 	donors, acceptors := sm.findOptimalDistribution(0, 0, Join)
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
@@ -268,12 +273,12 @@ func (sm *ShardMaster) joinReassign(shards [common.NShards]int64, joiner int64) 
 
 func (sm *ShardMaster) leaveReassign(shards [common.NShards]int64, leaver int64) [common.NShards]int64 {
 	// addition leave todo: rebalance
-	if _, ok := sm.impl.ShardDistribution[leaver]; !ok {
-		return shards
+	donateVal := 0
+	if _, ok := sm.impl.ShardDistribution[leaver]; ok {
+		donateVal = sm.impl.ShardDistribution[leaver]
+		delete(sm.impl.ShardDistribution, leaver)
 	}
 	// change distribution
-	donateVal := sm.impl.ShardDistribution[leaver]
-	delete(sm.impl.ShardDistribution, leaver)
 	donors, acceptors := sm.findOptimalDistribution(donateVal, leaver, Leave)
 	for i := range shards {
 		if vd, ok := donors[shards[i]]; ok {
@@ -301,8 +306,6 @@ func (sm *ShardMaster) ApplyOp(v interface{}) {
 	if op.Operation == Query {
 		return
 	}
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	lastConfig := sm.getLatestConfig()
 	if op.Operation == Join {
 		groups := make(map[int64][]string)
