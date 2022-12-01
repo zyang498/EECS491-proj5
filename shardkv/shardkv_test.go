@@ -377,3 +377,74 @@ func TestConcurrentUnreliable(t *testing.T) {
 	doConcurrent(t, true)
 	fmt.Printf("  ... Passed\n")
 }
+
+func TestLinear(t *testing.T) {
+	tc := setup(t, "linear-", false)
+	defer tc.cleanup()
+
+	fmt.Printf("Test: Linear ...\n")
+
+	for i := 0; i < len(tc.groups); i++ {
+		tc.join(i)
+	}
+
+	rr := rand.New(rand.NewSource(int64(os.Getpid())))
+	const npara = 100
+	var ca [npara]chan bool
+	for i := 0; i < npara; i++ {
+		ca[i] = make(chan bool)
+		go func(me int) {
+			ok := true
+			defer func() { ca[me] <- ok }()
+			ck := tc.clerk()
+			key := strconv.Itoa(me)
+			last := ""
+			for iters := 0; iters < 3; iters++ {
+				nv := strconv.Itoa(rr.Int())
+				ck.Append(key, nv)
+				last = last + nv
+				v := ck.Get(key)
+				if v != last {
+					ok = false
+					t.Fatalf("Get(%v) expected %v got %v\n", key, last, v)
+				}
+
+				time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+			}
+		}(i)
+	}
+
+	for i := 0; i < len(tc.groups)-1; i++ {
+		time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+		tc.leave(i)
+	}
+
+	for i := 0; i < len(tc.groups); i++ {
+		time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+		tc.join(i)
+	}
+
+	for i := 0; i < len(tc.groups)-1; i++ {
+		time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+		tc.leave(i)
+	}
+
+	for i := 0; i < len(tc.groups); i++ {
+		time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+		tc.join(i)
+	}
+
+	for i := 0; i < len(tc.groups)-1; i++ {
+		time.Sleep(time.Duration(rr.Int()%30) * time.Millisecond)
+		tc.leave(i)
+	}
+
+	for i := 0; i < npara; i++ {
+		x := <-ca[i]
+		if x == false {
+			t.Fatalf("something is wrong")
+		}
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
