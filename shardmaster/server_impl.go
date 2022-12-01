@@ -416,7 +416,7 @@ func (sm *ShardMaster) sendDonateRPC(configNum int, shards [common.NShards]int64
 	var reply common.DonateDataReply
 	i := 0
 	ok := common.Call(servers[i], "ShardKV.DonateData", args, &reply)
-	for !ok || (ok && reply.Err != common.OK) {
+	for !ok {
 		i += 1
 		i = i % len(servers)
 		time.Sleep(10 * time.Millisecond)
