@@ -73,7 +73,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	}
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
-	if v, found := kv.impl.HandledId[args.Impl.RequestId]; found && v {
+	if _, isHandle := kv.impl.HandledId[args.Impl.RequestId]; isHandle {
 		if kv.impl.Shards[shard] != kv.gid {
 			reply.Err = ErrWrongGroup
 		} else {
@@ -127,7 +127,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	//log.Printf("%v Server %v of group %v received %v rpc with key %v value %v", args.Impl.RequestId, kv.me, kv.gid, args.Op, args.Key, args.Value)
 	shard := common.Key2Shard(args.Key)
 	kv.mu.Lock()
-	if v, found := kv.impl.HandledId[args.Impl.RequestId]; found && v {
+	if _, isHandle := kv.impl.HandledId[args.Impl.RequestId]; isHandle {
 		reply.Err = OK
 		kv.mu.Unlock()
 		return nil

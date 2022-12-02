@@ -48,6 +48,11 @@ func (ck *Clerk) Join(gid int64, servers []string) {
 				return
 			}
 		}
+		//i := int(common.Nrand()) % len(ck.servers)
+		//ok := common.Call(ck.servers[i], "ShardMaster.Join", &args, &reply)
+		//if ok {
+		//	return
+		//}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -64,6 +69,11 @@ func (ck *Clerk) Leave(gid int64) {
 				return
 			}
 		}
+		//i := int(common.Nrand()) % len(ck.servers)
+		//ok := common.Call(ck.servers[i], "ShardMaster.Leave", &args, &reply)
+		//if ok {
+		//	return
+		//}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
